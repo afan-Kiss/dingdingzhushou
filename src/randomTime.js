@@ -20,9 +20,12 @@ function formatNowTime() {
   return minutesToTimeStr(getNowMinutes());
 }
 
-function getRandomMinutesInRange(randomStart, randomEnd) {
+function getRandomMinutesInRange(randomStart, randomEnd, deadlineHhmm) {
   const start = parseTimeToMinutes(randomStart);
-  const end = parseTimeToMinutes(randomEnd);
+  let end = parseTimeToMinutes(randomEnd);
+  const deadlineMin = parseTimeToMinutes(deadlineHhmm);
+  if (end <= start) return start;
+  end = Math.min(end, deadlineMin);
   if (end <= start) return start;
   return start + Math.floor(Math.random() * (end - start + 1));
 }
@@ -40,6 +43,9 @@ function getDeadlineMsToday(deadlineHhmm) {
   const [h, m] = String(deadlineHhmm).split(':').map(Number);
   const target = new Date(now);
   target.setHours(h, m, 0, 0);
+  if (target.getTime() <= now.getTime()) {
+    target.setDate(target.getDate() + 1);
+  }
   return target.getTime();
 }
 
@@ -52,11 +58,11 @@ function computeRandomWaitMs(taskConfig, skipRandom = false) {
   const deadline = taskConfig.confirmDeadline;
 
   if (skipRandom) {
-    logger.info('跳过随机等待（测试模式）');
+    logger.info('跳过随机等待');
     return {
       waitMs: 0,
       scheduledTime: new Date(),
-      scheduledTimeStr: '立即（测试）',
+      scheduledTimeStr: '立即',
       planStartTime,
       confirmDeadline: deadline,
       lateStart: false,
@@ -65,11 +71,14 @@ function computeRandomWaitMs(taskConfig, skipRandom = false) {
   }
 
   const nowMin = getNowMinutes();
-  const randomStartMin = parseTimeToMinutes(taskConfig.randomStart);
   const randomEndMin = parseTimeToMinutes(taskConfig.randomEnd);
   const deadlineMin = parseTimeToMinutes(deadline);
 
-  const randomTargetMin = getRandomMinutesInRange(taskConfig.randomStart, taskConfig.randomEnd);
+  const randomTargetMin = getRandomMinutesInRange(
+    taskConfig.randomStart,
+    taskConfig.randomEnd,
+    deadline
+  );
   const scheduledTimeStr = minutesToTimeStr(randomTargetMin);
 
   const baseLog = {

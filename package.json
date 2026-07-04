@@ -9,6 +9,7 @@
     "dry-run": "node src/main.js morning --dry-run",
     "test-now": "node src/main.js morning --test-now",
     "check": "node src/test/check.js",
+    "open:latest-report": "node src/test/open-latest-report.js",
     "test:wechat-text": "node src/test/wechat-text.js",
     "test:wechat-image": "node src/test/wechat-image.js",
     "test:wechat-reply": "node src/test/wechat-reply.js",
@@ -18,7 +19,12 @@
     "test:recording": "node src/test/recording.js",
     "test:uiautomator": "node src/test/uiautomator.js",
     "test:full-morning-now": "node src/main.js morning --test-now",
-    "test:full-evening-now": "node src/main.js evening --test-now"
+    "test:full-evening-now": "node src/main.js evening --test-now",
+    "test:open-attendance-now": "node src/test/open-attendance-now.js",
+    "test:navigate-attendance": "node src/test/navigate-attendance.js",
+    "test:checkin-click": "node src/test/checkin-click.js",
+    "test:scrcpy-checkin": "node src/test/scrcpy-checkin-quick.js",
+    "test:detect-page": "node src/test/detect-page.js"
   },
   "engines": {
     "node": ">=18.0.0"

@@ -153,6 +153,22 @@ curl http://127.0.0.1:8791/health
 | `npm run test:uiautomator` | dump UI XML 并列出文本 |
 | `npm run test:full-morning-now` | 立即跑上班全流程 |
 | `npm run test:full-evening-now` | 立即跑下班全流程 |
+| `npm run open:latest-report` | 用记事本打开最近一次运行报告 |
+
+## 运行报告
+
+每次完整流程结束（成功 / 取消 / 失败）都会生成：
+
+- `reports/latest-run.json` — 机器可读
+- `reports/latest-run.md` — 人类可读
+
+报告包含：taskType、runId、确认短码与回复结果、ADB 状态、截图/录屏路径、考勤页识别结果、错误阶段、各步骤耗时等。
+
+```bat
+npm run open:latest-report
+```
+
+**联调失败时排查：** 把 `reports/latest-run.md` 和当天 `logs/helper-YYYY-MM-DD.log` 一起发出来，便于定位问题。
 
 ## 测试步骤（手动）
 
@@ -236,6 +252,7 @@ wx.sendImage('screenshots/某张.png');
 
 | 类型 | 位置 |
 |------|------|
+| 运行报告 | `reports/latest-run.json` / `reports/latest-run.md` |
 | 日志 | `logs/helper-YYYY-MM-DD.log` |
 | 截图 | `screenshots/` |
 | 录屏 | `recordings/` |

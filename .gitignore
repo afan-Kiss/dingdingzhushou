@@ -6,6 +6,9 @@ recordings/*
 !recordings/.gitkeep
 dumps/*
 !dumps/.gitkeep
+reports/latest-run.json
+reports/latest-run.md
 screenshots/_test_image.png
 .env
 *.local.json
+.cache/

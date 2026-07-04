@@ -1,5 +1,5 @@
 const { logger } = require('./logger');
-const { loadConfig } = require('./config');
+const { loadConfig, validateConfig } = require('./config');
 const { runMorning } = require('./tasks/morning');
 const { runEvening } = require('./tasks/evening');
 
@@ -23,7 +23,12 @@ async function main() {
   }
 
   try {
-    loadConfig();
+    const config = loadConfig();
+    const validation = validateConfig(config);
+    if (!validation.ok) {
+      logger.error('配置校验失败', { errors: validation.errors });
+      process.exit(1);
+    }
   } catch (err) {
     logger.error('加载配置失败', { error: err.message });
     process.exit(1);

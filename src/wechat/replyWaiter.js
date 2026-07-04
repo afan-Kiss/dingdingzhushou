@@ -1,6 +1,10 @@
 const http = require('http');
+const { execFile } = require('child_process');
+const { promisify } = require('util');
 const { logger } = require('../logger');
 const { classifyConfirmationReply } = require('./confirmation');
+
+const execFileAsync = promisify(execFile);
 
 const FROM_KEYS = ['from_wxid', 'fromWxid', 'fromUser', 'from_user', 'sender', 'sender_wxid', 'talker', 'userName', 'wxid'];
 const CONTENT_KEYS = ['content', 'msg', 'text', 'message', 'title'];
@@ -43,6 +47,31 @@ function normalizeWxbotCallback(body) {
   return { from, content: String(content || '').trim(), receivedAt: Date.now() };
 }
 
+const MAX_CALLBACK_BODY = 64 * 1024;
+
+async function killProcessOnPort(port) {
+  if (process.platform !== 'win32') return false;
+  try {
+    const { stdout } = await execFileAsync(
+      'powershell',
+      [
+        '-NoProfile',
+        '-Command',
+        `(Get-NetTCPConnection -LocalPort ${port} -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess`,
+      ],
+      { windowsHide: true }
+    );
+    const pid = parseInt(String(stdout || '').trim(), 10);
+    if (!pid || pid <= 0) return false;
+    await execFileAsync('taskkill', ['/F', '/PID', String(pid)], { windowsHide: true });
+    logger.warn('已释放占用回调端口的进程', { port, pid });
+    return true;
+  } catch (err) {
+    logger.warn('释放回调端口失败', { port, error: err.message });
+    return false;
+  }
+}
+
 class ReplyWaiter {
   constructor(options = {}) {
     this.port = options.port || 8791;
@@ -59,6 +88,18 @@ class ReplyWaiter {
     return f === this.targetWxid;
   }
 
+  startWithRecovery() {
+    if (this.server) return Promise.resolve(this.port);
+    return this.start().catch(async (err) => {
+      if (!/EADDRINUSE|已被占用/.test(String(err.message || ''))) throw err;
+      logger.warn('回调端口被占用，尝试释放后重试', { port: this.port });
+      this.server = null;
+      await killProcessOnPort(this.port);
+      await new Promise((r) => setTimeout(r, 800));
+      return this.start();
+    });
+  }
+
   start() {
     if (this.server) return Promise.resolve(this.port);
 
@@ -72,10 +113,22 @@ class ReplyWaiter {
 
         if (req.method === 'POST' && req.url === '/wxbot/callback') {
           let body = '';
+          let tooLarge = false;
           req.on('data', (chunk) => {
+            if (tooLarge) return;
             body += chunk;
+            if (body.length > MAX_CALLBACK_BODY) {
+              tooLarge = true;
+              body = '';
+            }
           });
           req.on('end', () => {
+            if (tooLarge) {
+              logger.warn('wxbot 回调 body 过大，已忽略');
+              res.writeHead(413, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: false, error: 'payload_too_large' }));
+              return;
+            }
             try {
               const parsed = JSON.parse(body || '{}');
               const msg = normalizeWxbotCallback(parsed);
@@ -83,6 +136,9 @@ class ReplyWaiter {
                 if (this.isAuthorized(msg.from)) {
                   logger.info('收到目标 wxid 回复', { from: msg.from, content: msg.content });
                   this.messages.push(msg);
+    if (this.messages.length > 200) {
+      this.messages = this.messages.slice(-100);
+    }
                   for (const fn of this.listeners) fn(msg);
                 } else {
                   logger.debug('忽略非目标 wxid 消息', { from: msg.from, expected: this.targetWxid });
@@ -139,6 +195,7 @@ class ReplyWaiter {
   waitForSessionReply(session, acceptTypes = ['confirm', 'cancel']) {
     const sinceMs = session.sentAt;
     const deadlineMs = session.deadlineMs;
+    this.messages = this.messages.filter((m) => m.receivedAt >= sinceMs - 5000);
 
     return new Promise((resolve) => {
       const evaluate = (msg) => {
@@ -177,4 +234,4 @@ class ReplyWaiter {
   }
 }
 
-module.exports = { ReplyWaiter, normalizeWxbotCallback };
+module.exports = { ReplyWaiter, normalizeWxbotCallback, killProcessOnPort };

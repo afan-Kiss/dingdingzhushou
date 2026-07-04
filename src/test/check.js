@@ -5,7 +5,7 @@ const { execSync } = require('child_process');
 const { PROJECT_ROOT } = require('../logger');
 const { loadConfig, validateConfig, CONFIG_PATH } = require('../config');
 
-const DIRS = ['logs', 'screenshots', 'recordings', 'dumps', 'src'];
+const DIRS = ['logs', 'screenshots', 'recordings', 'dumps', 'reports', 'src'];
 
 function checkSyntax() {
   const files = [];

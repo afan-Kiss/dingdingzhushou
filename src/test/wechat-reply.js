@@ -15,7 +15,12 @@ async function main() {
   console.log(`回调服务: http://127.0.0.1:${port}/wxbot/callback`);
 
   const wx = new WxbotAdapter(config);
-  await wx.mergeCallbackUrl(waiter.getCallbackUrl());
+  const mergeResult = await wx.mergeCallbackUrl(waiter.getCallbackUrl());
+  if (!mergeResult.ok) {
+    console.error('合并 callback URL 失败', mergeResult);
+    await waiter.stop();
+    process.exit(1);
+  }
 
   const confirmationId = generateConfirmationId();
   const sentAt = Date.now();
@@ -34,12 +39,9 @@ async function main() {
     confirmationId,
     scheduledTimeStr: '测试',
     deadline: '3分钟内',
-  });
-  msg.replace('打开钉钉考勤页', '【联调测试，回复确定或不打卡即可】');
+  }).replace('打开钉钉考勤页', '【联调测试，回复确定或不打卡即可】');
 
-  await wx.sendText(
-    `【联调测试 #${confirmationId}】\n这是 replyWaiter 测试。\n回复“确定”或“不打卡”。\n短码：${confirmationId}`
-  );
+  await wx.sendText(msg);
   console.log('已发确认消息，等待回复（3分钟）...');
   console.log(`目标 wxid: ${targetWxid}`);
 
