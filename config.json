@@ -1,0 +1,52 @@
+{
+  "adbPath": "",
+  "dingTalkPackage": "com.alibaba.android.rimet",
+  "deviceSerial": "",
+  "notifyWechatAlias": "fanfanerhao0824",
+  "notifyWechatWxid": "wxid_jr6nn7q8lezg12",
+  "morning": {
+    "enabled": true,
+    "randomStart": "09:40",
+    "randomEnd": "09:50",
+    "confirmDeadline": "09:58"
+  },
+  "evening": {
+    "enabled": true,
+    "randomStart": "19:05",
+    "randomEnd": "19:20",
+    "confirmDeadline": "19:28"
+  },
+  "wxbot": {
+    "enabled": true,
+    "mode": "auto-detect",
+    "qianfanBotProjectPath": "E:\\我的软件源码\\千帆中转机器人",
+    "baseUrl": "http://127.0.0.1:5000",
+    "callbackPort": 8791,
+    "sendTextPath": "/api/wechat/send-text",
+    "sendImagePath": "/api/wechat/send-image",
+    "sendFilePath": "/api/wechat/send-file",
+    "timeoutMs": 10000
+  },
+  "recording": {
+    "enabled": true,
+    "maxSeconds": 180,
+    "bitRate": "4M",
+    "size": "",
+    "sendToWechat": true
+  },
+  "qtscrcpy": {
+    "enabled": false,
+    "openOnlyWhenFailed": true,
+    "path": ""
+  },
+  "scheduledTask": {
+    "wakeToRun": false
+  },
+  "automation": {
+    "wakePhone": true,
+    "openDingTalk": true,
+    "tryNavigateToAttendance": true,
+    "finalClickEnabled": false,
+    "afterScreenshotWaitSeconds": 120
+  }
+}

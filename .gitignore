@@ -1,0 +1,11 @@
+node_modules/
+logs/*.log
+screenshots/*
+!screenshots/.gitkeep
+recordings/*
+!recordings/.gitkeep
+dumps/*
+!dumps/.gitkeep
+screenshots/_test_image.png
+.env
+*.local.json

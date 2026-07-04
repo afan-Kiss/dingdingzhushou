@@ -1,0 +1,28 @@
+{
+  "name": "dingtalk-checkin-helper",
+  "version": "1.0.1",
+  "description": "钉钉打卡确认助手 - 通过微信确认后打开钉钉考勤页并截图录屏",
+  "main": "src/main.js",
+  "scripts": {
+    "start:morning": "node src/main.js morning",
+    "start:evening": "node src/main.js evening",
+    "dry-run": "node src/main.js morning --dry-run",
+    "test-now": "node src/main.js morning --test-now",
+    "check": "node src/test/check.js",
+    "test:wechat-text": "node src/test/wechat-text.js",
+    "test:wechat-image": "node src/test/wechat-image.js",
+    "test:wechat-reply": "node src/test/wechat-reply.js",
+    "test:wechat-callback": "node src/test/wechat-callback.js",
+    "test:adb": "node src/test/adb.js",
+    "test:screenshot": "node src/test/screenshot.js",
+    "test:recording": "node src/test/recording.js",
+    "test:uiautomator": "node src/test/uiautomator.js",
+    "test:full-morning-now": "node src/main.js morning --test-now",
+    "test:full-evening-now": "node src/main.js evening --test-now"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": ["dingtalk", "checkin", "wxbot", "wechat"],
+  "license": "MIT"
+}
