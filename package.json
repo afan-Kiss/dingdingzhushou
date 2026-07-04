@@ -6,6 +6,7 @@
   "scripts": {
     "start:morning": "node src/main.js morning",
     "start:evening": "node src/main.js evening",
+    "start:auto": "node src/main.js auto",
     "dry-run": "node src/main.js morning --dry-run",
     "test-now": "node src/main.js morning --test-now",
     "check": "node src/test/check.js",

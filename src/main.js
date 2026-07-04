@@ -2,10 +2,12 @@ const { logger } = require('./logger');
 const { loadConfig, validateConfig } = require('./config');
 const { runMorning } = require('./tasks/morning');
 const { runEvening } = require('./tasks/evening');
+const { runAutoSchedule } = require('./tasks/auto');
 
 function parseArgs(argv) {
   const args = argv.slice(2);
-  const taskType = args.find((a) => a === 'morning' || a === 'evening') || 'morning';
+  const taskArg = args.find((a) => a === 'morning' || a === 'evening' || a === 'auto');
+  const taskType = taskArg || 'auto';
   return {
     taskType,
     dryRun: args.includes('--dry-run'),
@@ -34,7 +36,12 @@ async function main() {
     process.exit(1);
   }
 
-  const runner = opts.taskType === 'evening' ? runEvening : runMorning;
+  const runners = {
+    morning: runMorning,
+    evening: runEvening,
+    auto: runAutoSchedule,
+  };
+  const runner = runners[opts.taskType] || runAutoSchedule;
   const result = await runner(opts);
   logger.info('流程结束', { state: result.state });
   process.exit(result.state === 'FAILED' ? 1 : 0);
