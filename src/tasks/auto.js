@@ -5,8 +5,10 @@ const {
   getNowMinutes,
   parseTimeToMinutes,
   getMsUntilTimeToday,
+  getMsUntilTomorrowStart,
   formatNowTime,
   sleep,
+  interruptibleSleep,
 } = require('../randomTime');
 
 function isPastDeadline(taskConfig) {
@@ -14,7 +16,11 @@ function isPastDeadline(taskConfig) {
   return getNowMinutes() > parseTimeToMinutes(taskConfig.confirmDeadline);
 }
 
-async function waitUntilWindowOpens(taskConfig, label) {
+function shouldStop(options) {
+  return Boolean(options?.shouldStop?.() || options?.isShuttingDown?.());
+}
+
+async function waitUntilWindowOpens(taskConfig, label, options = {}) {
   const startMin = parseTimeToMinutes(taskConfig.randomStart);
   const nowMin = getNowMinutes();
 
@@ -24,7 +30,7 @@ async function waitUntilWindowOpens(taskConfig, label) {
       randomEnd: taskConfig.randomEnd,
       now: formatNowTime(),
     });
-    return;
+    return true;
   }
 
   const waitMs = getMsUntilTimeToday(taskConfig.randomStart);
@@ -33,10 +39,11 @@ async function waitUntilWindowOpens(taskConfig, label) {
     waitMinutes: Math.round(waitMs / 60000),
     now: formatNowTime(),
   });
-  await sleep(waitMs);
+  return interruptibleSleep(waitMs, () => shouldStop(options));
 }
 
-async function runAutoSchedule(options = {}) {
+/** 执行当日上班/下班调度（单次） */
+async function runDailySchedule(options = {}) {
   const config = loadConfig();
   const morning = config.morning || {};
   const evening = config.evening || {};
@@ -49,11 +56,16 @@ async function runAutoSchedule(options = {}) {
 
   let lastState = 'DONE';
 
+  if (shouldStop(options)) {
+    return { state: 'STOPPED' };
+  }
+
   if (morning.enabled !== false) {
     if (isPastDeadline(morning)) {
       logger.info('上班确认已过截止时间，跳过', { deadline: morning.confirmDeadline });
     } else {
-      await waitUntilWindowOpens(morning, '上班');
+      const ready = await waitUntilWindowOpens(morning, '上班', options);
+      if (!ready) return { state: 'STOPPED' };
       if (!isPastDeadline(morning)) {
         const result = await runCheckinTask('morning', { ...options, skipRandom: false, testNow: false });
         lastState = result.state;
@@ -62,11 +74,16 @@ async function runAutoSchedule(options = {}) {
     }
   }
 
+  if (shouldStop(options)) {
+    return { state: 'STOPPED' };
+  }
+
   if (evening.enabled !== false) {
     if (isPastDeadline(evening)) {
       logger.info('下班确认已过截止时间，跳过', { deadline: evening.confirmDeadline });
     } else {
-      await waitUntilWindowOpens(evening, '下班');
+      const ready = await waitUntilWindowOpens(evening, '下班', options);
+      if (!ready) return { state: 'STOPPED' };
       if (!isPastDeadline(evening)) {
         const result = await runCheckinTask('evening', { ...options, skipRandom: false, testNow: false });
         lastState = result.state;
@@ -79,4 +96,46 @@ async function runAutoSchedule(options = {}) {
   return { state: lastState };
 }
 
-module.exports = { runAutoSchedule, isPastDeadline, waitUntilWindowOpens };
+/** 常驻模式：每日循环，进程不退出 */
+async function runAutoDaemon(options = {}) {
+  logger.info('常驻调度已启动，进程将保持运行直至手动停止');
+
+  while (!shouldStop(options)) {
+    try {
+      const result = await runDailySchedule(options);
+      if (result.state === 'STOPPED' || shouldStop(options)) {
+        break;
+      }
+    } catch (err) {
+      logger.error('今日调度异常', { error: err.message, stack: err.stack });
+      if (shouldStop(options)) break;
+      const ok = await interruptibleSleep(60_000, () => shouldStop(options));
+      if (!ok) break;
+      continue;
+    }
+
+    if (shouldStop(options)) break;
+
+    const waitMs = getMsUntilTomorrowStart(1);
+    logger.info('常驻等待明日任务', {
+      waitHours: (waitMs / 3_600_000).toFixed(1),
+      resumeAt: new Date(Date.now() + waitMs).toLocaleString('zh-CN', { hour12: false }),
+    });
+    const ok = await interruptibleSleep(waitMs, () => shouldStop(options));
+    if (!ok) break;
+  }
+
+  logger.info('常驻调度已停止', { now: formatNowTime() });
+  return { state: 'STOPPED' };
+}
+
+/** @deprecated 使用 runDailySchedule；保留别名兼容旧引用 */
+const runAutoSchedule = runDailySchedule;
+
+module.exports = {
+  runDailySchedule,
+  runAutoSchedule,
+  runAutoDaemon,
+  isPastDeadline,
+  waitUntilWindowOpens,
+};

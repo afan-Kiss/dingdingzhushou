@@ -137,6 +137,26 @@ function computeRandomWaitMs(taskConfig, skipRandom = false) {
   };
 }
 
+function getMsUntilTomorrowStart(minutesAfterMidnight = 1) {
+  const now = new Date();
+  const target = new Date(now);
+  target.setDate(target.getDate() + 1);
+  target.setHours(0, minutesAfterMidnight, 0, 0);
+  return Math.max(0, target.getTime() - now.getTime());
+}
+
+async function interruptibleSleep(ms, shouldStop, tickMs = 5000) {
+  if (ms <= 0) return true;
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    if (shouldStop?.()) return false;
+    const chunk = Math.min(tickMs, deadline - Date.now());
+    if (chunk <= 0) break;
+    await sleep(chunk);
+  }
+  return !shouldStop?.();
+}
+
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -148,8 +168,10 @@ module.exports = {
   formatNowTime,
   getRandomMinutesInRange,
   getMsUntilTimeToday,
+  getMsUntilTomorrowStart,
   getMsUntilDeadline,
   getDeadlineMsToday,
   computeRandomWaitMs,
   sleep,
+  interruptibleSleep,
 };
