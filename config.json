@@ -10,13 +10,13 @@
   "notifyWechatWxid": "wxid_jr6nn7q8lezg12",
   "morning": {
     "enabled": true,
-    "randomStart": "09:40",
-    "randomEnd": "09:50",
+    "randomStart": "09:45",
+    "randomEnd": "09:51",
     "confirmDeadline": "09:58"
   },
   "evening": {
     "enabled": true,
-    "randomStart": "19:05",
+    "randomStart": "19:01",
     "randomEnd": "19:20",
     "confirmDeadline": "19:28"
   },

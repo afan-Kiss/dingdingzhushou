@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { logger } = require('../logger');
 const { DUMP_DIR, FINAL_CHECKIN_KEYWORDS, NAV_KEYWORDS } = require('../adb/dingtalk');
-const { clickH5CheckinButton, verifyCheckinAfterClick, confirmPhotoRemarkDialogIfPresent } = require('./checkinClick');
+const { clickH5CheckinButton, verifyCheckinAfterClick, confirmPhotoRemarkDialogIfPresent, waitForAttendancePageStable, dismissAntiCheatDialogIfPresent } = require('./checkinClick');
 const { captureScreenBuffer } = require('../adb/screenshot');
 const {
   detectDingTalkPage,
@@ -515,14 +515,37 @@ async function clickFinalCheckinButton(adb, config, taskType = 'morning', hooks 
 
   const finalButtons = findStandaloneFinalButtons(dump.nodes, metrics);
   if (finalButtons.length > 0) {
+    const stable = await waitForAttendancePageStable(adb, config);
+    if (!stable.locationReady) {
+      const reason = stable.locationFailed ? 'location_failed' : 'location_not_ready';
+      return { ok: false, method: 'ui', reason, stableWaitMs: stable.elapsedMs, dumpPath: dump.localPath };
+    }
+
     const btn = finalButtons.sort((a, b) => (b.boundsObj?.cy || 0) - (a.boundsObj?.cy || 0))[0];
     const label = btn.text || btn.desc || '';
+    const beforeCap = await captureScreenBuffer(adb);
+    const beforeBytes = beforeCap.ok ? beforeCap.bytes : 0;
+
     logger.info('点击最终打卡按钮', { text: label, bounds: btn.bounds });
     if (hooks.beforeFirstTap) {
       await hooks.beforeFirstTap();
     }
     await adb.tapTouch(btn.boundsObj.cx, btn.boundsObj.cy, { config });
     await new Promise((r) => setTimeout(r, 1500));
+
+    if (beforeBytes > 0) {
+      const antiCheat = await dismissAntiCheatDialogIfPresent(adb, config, beforeBytes);
+      if (antiCheat.present && antiCheat.dismissed) {
+        return {
+          ok: false,
+          method: 'ui',
+          buttonText: label,
+          reason: 'anti_cheat_dialog',
+          dumpPath: dump.localPath,
+        };
+      }
+    }
+
     const afterDump = await dumpUi(adb, 'checkin_after');
     if (!afterDump.ok) {
       return { ok: false, reason: 'after_dump_failed', method: 'ui', buttonText: label, dumpPath: dump.localPath };

@@ -16,6 +16,7 @@ async function runCheckinTask(taskType, options = {}) {
     dryRun: options.dryRun,
     testNow: options.testNow,
     skipRandom: options.skipRandom || options.testNow,
+    shouldStop: options.shouldStop,
   });
 
   return machine.run();

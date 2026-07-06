@@ -55,7 +55,9 @@ function classifyConfirmationReply(text, session, acceptTypes = ['confirm', 'can
     const hasCurrent = codes.includes(currentId);
     const hasWrongCode = codes.some((c) => c !== currentId);
     if (hasWrongCode && !hasCurrent) return 'unknown';
-    if (hasCurrent && CONFIRM_PATTERNS.some((p) => p.test(t))) return 'confirm';
+    if (hasCurrent && (CONFIRM_PATTERNS.some((p) => p.test(t)) || CHECKIN_YES_PATTERNS.some((p) => p.test(t)))) {
+      return 'confirm';
+    }
     if (hasCurrent && /^(确定|确认)\s*[A-Z0-9]{4}$/i.test(t.replace('#', ''))) return 'confirm';
     return 'unknown';
   }

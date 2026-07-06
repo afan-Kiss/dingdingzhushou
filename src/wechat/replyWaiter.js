@@ -192,12 +192,25 @@ class ReplyWaiter {
     });
   }
 
-  waitForSessionReply(session, acceptTypes = ['confirm', 'cancel']) {
+  clearMessagesBefore(sinceMs) {
+    this.messages = this.messages.filter((m) => m.receivedAt >= sinceMs);
+  }
+
+  waitForSessionReply(session, acceptTypes = ['confirm', 'cancel'], options = {}) {
     const sinceMs = session.sentAt;
     const deadlineMs = session.deadlineMs;
-    this.messages = this.messages.filter((m) => m.receivedAt >= sinceMs - 5000);
+    const shouldStop = options.shouldStop;
+    this.messages = this.messages.filter((m) => m.receivedAt >= sinceMs);
 
     return new Promise((resolve) => {
+      let settled = false;
+      const finish = (result) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(result);
+      };
+
       const evaluate = (msg) => {
         if (msg.receivedAt < sinceMs) return null;
         if (!this.isAuthorized(msg.from)) return null;
@@ -207,25 +220,29 @@ class ReplyWaiter {
       for (const msg of this.messages) {
         const type = evaluate(msg);
         if (type && acceptTypes.includes(type)) {
-          resolve({ type, content: msg.content, message: msg });
+          finish({ type, content: msg.content, message: msg });
           return;
         }
       }
 
-      const timeout = setTimeout(() => {
-        cleanup();
-        resolve({ type: 'timeout', content: '', message: null });
-      }, Math.max(0, deadlineMs - Date.now()));
+      const poll = setInterval(() => {
+        if (shouldStop?.()) {
+          finish({ type: 'stopped', content: '', message: null });
+          return;
+        }
+        if (Date.now() >= deadlineMs) {
+          finish({ type: 'timeout', content: '', message: null });
+        }
+      }, 1000);
 
       const onMessage = (msg) => {
         const type = evaluate(msg);
         if (!type || !acceptTypes.includes(type)) return;
-        cleanup();
-        resolve({ type, content: msg.content, message: msg });
+        finish({ type, content: msg.content, message: msg });
       };
 
       const cleanup = () => {
-        clearTimeout(timeout);
+        clearInterval(poll);
         this.listeners = this.listeners.filter((fn) => fn !== onMessage);
       };
 

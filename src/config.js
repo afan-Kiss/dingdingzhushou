@@ -79,6 +79,11 @@ function getTaskLabel(taskType) {
   return taskType === 'evening' ? '下班' : '上班';
 }
 
+function isValidTimeStr(hhmm) {
+  const m = String(hhmm || '').match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
+  return !!m;
+}
+
 function validateTaskTimes(taskConfig, label, errors) {
   if (!taskConfig) {
     errors.push(`${label} 任务配置缺失`);
@@ -90,9 +95,21 @@ function validateTaskTimes(taskConfig, label, errors) {
   if (!confirmDeadline) errors.push(`${label}.confirmDeadline 缺失`);
   if (!randomStart || !randomEnd || !confirmDeadline) return;
 
+  for (const [field, value] of [
+    ['randomStart', randomStart],
+    ['randomEnd', randomEnd],
+    ['confirmDeadline', confirmDeadline],
+  ]) {
+    if (!isValidTimeStr(value)) {
+      errors.push(`${label}.${field} 格式无效（应为 HH:MM）: ${value}`);
+    }
+  }
+
   const startMin = parseTimeToMinutes(randomStart);
   const endMin = parseTimeToMinutes(randomEnd);
   const deadlineMin = parseTimeToMinutes(confirmDeadline);
+  if (Number.isNaN(startMin) || Number.isNaN(endMin) || Number.isNaN(deadlineMin)) return;
+
   if (endMin <= startMin) {
     errors.push(`${label}: randomEnd 必须晚于 randomStart`);
   }

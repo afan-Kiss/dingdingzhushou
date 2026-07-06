@@ -145,6 +145,21 @@ function getMsUntilTomorrowStart(minutesAfterMidnight = 1) {
   return Math.max(0, target.getTime() - now.getTime());
 }
 
+/** 当日调度结束后，计算到下一轮 runDailySchedule 的等待时间 */
+function getMsUntilNextDailyRun(config) {
+  const morning = config.morning || {};
+  if (morning.enabled === false || !morning.randomStart) {
+    return getMsUntilTomorrowStart(1);
+  }
+  const nowMin = getNowMinutes();
+  const morningStartMin = parseTimeToMinutes(morning.randomStart);
+  // 跨日收尾（如晚班拖到 00:30）：当日早班尚未执行，等到上班窗口
+  if (nowMin < morningStartMin) {
+    return getMsUntilTimeToday(morning.randomStart);
+  }
+  return getMsUntilTomorrowStart(1);
+}
+
 async function interruptibleSleep(ms, shouldStop, tickMs = 5000) {
   if (ms <= 0) return true;
   const deadline = Date.now() + ms;
@@ -169,6 +184,7 @@ module.exports = {
   getRandomMinutesInRange,
   getMsUntilTimeToday,
   getMsUntilTomorrowStart,
+  getMsUntilNextDailyRun,
   getMsUntilDeadline,
   getDeadlineMsToday,
   computeRandomWaitMs,

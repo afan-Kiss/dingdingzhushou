@@ -63,7 +63,6 @@ async function main() {
   if (opts.taskType === 'auto' && !opts.once) {
     result = await runAutoDaemon(runtimeOpts);
     process.exit(result.state === 'FAILED' ? 1 : 0);
-    return;
   }
 
   const runners = {

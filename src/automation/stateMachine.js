@@ -1,6 +1,6 @@
 const { logger } = require('../logger');
 const fs = require('fs');
-const { sleep, computeRandomWaitMs } = require('../randomTime');
+const { sleep, computeRandomWaitMs, interruptibleSleep } = require('../randomTime');
 const { getTaskLabel, resolveNotifyWxid } = require('../config');
 const { WxbotAdapter } = require('../wechat/wxbotAdapter');
 const { ReplyWaiter } = require('../wechat/replyWaiter');
@@ -23,7 +23,6 @@ const STATES = {
   CANCELLED: 'CANCELLED',
   DEVICE_CHECK: 'DEVICE_CHECK',
   SCREENSHOT_BEFORE: 'SCREENSHOT_BEFORE',
-  START_RECORDING: 'START_RECORDING',
   WAKE_PHONE: 'WAKE_PHONE',
   OPEN_DINGTALK: 'OPEN_DINGTALK',
   NAVIGATE_ATTENDANCE: 'NAVIGATE_ATTENDANCE',
@@ -31,12 +30,10 @@ const STATES = {
   SEND_ATTENDANCE_NOTICE: 'SEND_ATTENDANCE_NOTICE',
   WAIT_CHECKIN_REPLY: 'WAIT_CHECKIN_REPLY',
   AUTO_CHECKIN: 'AUTO_CHECKIN',
-  SCREENSHOT_AFTER: 'SCREENSHOT_AFTER',
-  STOP_RECORDING: 'STOP_RECORDING',
-  SEND_RECORDING: 'SEND_RECORDING',
   LOCK_SCREEN: 'LOCK_SCREEN',
   DONE: 'DONE',
   FAILED: 'FAILED',
+  STOPPED: 'STOPPED',
 };
 
 class CheckinStateMachine {
@@ -46,6 +43,7 @@ class CheckinStateMachine {
     this.dryRun = options.dryRun || false;
     this.skipRandom = options.skipRandom || false;
     this.testNow = options.testNow || false;
+    this.shouldStop = options.shouldStop || (() => false);
 
     this.taskConfig = this.taskType === 'evening' ? this.config.evening : this.config.morning;
     this.taskLabel = getTaskLabel(this.taskType);
@@ -104,6 +102,16 @@ class CheckinStateMachine {
       checkinKindInferred: detected.inferred === true,
     };
     return { ...detected, taskMismatch };
+  }
+
+  isStopping() {
+    return this.shouldStop();
+  }
+
+  async waitInterruptible(ms) {
+    if (ms <= 0) return !this.isStopping();
+    const ok = await interruptibleSleep(ms, () => this.isStopping());
+    return ok;
   }
 
   async sendWx(text) {
@@ -301,7 +309,12 @@ class CheckinStateMachine {
 
   async run() {
     try {
-      while (this.state !== STATES.DONE && this.state !== STATES.FAILED && this.state !== STATES.CANCELLED) {
+      const terminal = [STATES.DONE, STATES.FAILED, STATES.CANCELLED, STATES.STOPPED];
+      while (!terminal.includes(this.state)) {
+        if (this.isStopping()) {
+          this.state = STATES.STOPPED;
+          break;
+        }
         const step = this.state;
         logger.info('状态切换', { state: step });
         this.report.stepStart(step);
@@ -326,9 +339,6 @@ class CheckinStateMachine {
           case STATES.SCREENSHOT_BEFORE:
             await this.onScreenshotBefore();
             break;
-          case STATES.START_RECORDING:
-            this.state = STATES.OPEN_DINGTALK;
-            break;
           case STATES.WAKE_PHONE:
             await this.onWakePhone();
             break;
@@ -350,15 +360,6 @@ class CheckinStateMachine {
           case STATES.AUTO_CHECKIN:
             await this.onAutoCheckin();
             break;
-          case STATES.SCREENSHOT_AFTER:
-            await this.onScreenshotAfter();
-            break;
-          case STATES.STOP_RECORDING:
-            await this.onStopRecording();
-            break;
-          case STATES.SEND_RECORDING:
-            await this.onSendRecording();
-            break;
           case STATES.LOCK_SCREEN:
             await this.onLockScreen();
             break;
@@ -372,6 +373,7 @@ class CheckinStateMachine {
         } finally {
           if (this.state === STATES.FAILED) stepResult = 'failed';
           else if (this.state === STATES.CANCELLED) stepResult = 'cancelled';
+          else if (this.state === STATES.STOPPED) stepResult = 'stopped';
           else if (this.state === STATES.LOCK_SCREEN && this.context.checkinSkipped) stepResult = 'skipped';
           this.report.syncFromContext(this.context, this.state);
           this.report.stepEnd(step, stepResult);
@@ -450,7 +452,11 @@ class CheckinStateMachine {
 
     if (result.waitMs > 0) {
       logger.info(`随机等待 ${Math.round(result.waitMs / 1000)} 秒`, result);
-      await sleep(result.waitMs);
+      const ok = await this.waitInterruptible(result.waitMs);
+      if (!ok) {
+        this.state = STATES.STOPPED;
+        return;
+      }
     }
 
     this.state = STATES.SEND_CONFIRM;
@@ -479,6 +485,7 @@ class CheckinStateMachine {
       return;
     }
     session.sentAt = Date.now();
+    this.replyWaiter.clearMessagesBefore(session.sentAt);
     this.report.setConfirmationSent(session);
     this.state = STATES.WAIT_WECHAT_REPLY;
   }
@@ -492,8 +499,15 @@ class CheckinStateMachine {
     }
 
     const session = this.context.confirmSession;
-    const reply = await this.replyWaiter.waitForSessionReply(session, ['confirm', 'cancel']);
+    const reply = await this.replyWaiter.waitForSessionReply(session, ['confirm', 'cancel'], {
+      shouldStop: () => this.isStopping(),
+    });
     this.report.setConfirmationReply(reply);
+
+    if (reply.type === 'stopped') {
+      this.state = STATES.STOPPED;
+      return;
+    }
 
     if (reply.type === 'confirm') {
       this.state = STATES.DEVICE_CHECK;
@@ -762,9 +776,17 @@ class CheckinStateMachine {
 
     const reply = await this.replyWaiter.waitForSessionReply(
       { ...session, sentAt, deadlineMs },
-      ['checkin_yes', 'checkin_no']
+      ['checkin_yes', 'checkin_no'],
+      { shouldStop: () => this.isStopping() }
     );
     this.report.setCheckinReply(reply);
+
+    if (reply.type === 'stopped') {
+      this.context.checkinSkipped = true;
+      this.context.skipReason = '用户停止';
+      this.state = STATES.LOCK_SCREEN;
+      return;
+    }
 
     if (reply.type === 'checkin_yes') {
       if (this.config.automation?.finalClickEnabled === false) {
@@ -798,9 +820,16 @@ class CheckinStateMachine {
         const inferSentAt = Date.now();
         const inferReply = await this.replyWaiter.waitForSessionReply(
           { ...session, sentAt: inferSentAt, deadlineMs: inferSentAt + inferWaitSec * 1000 },
-          ['checkin_yes', 'checkin_no']
+          ['checkin_yes', 'checkin_no'],
+          { shouldStop: () => this.isStopping() }
         );
         this.report.data.inferredKindConfirmReply = inferReply.type;
+        if (inferReply.type === 'stopped') {
+          this.context.checkinSkipped = true;
+          this.context.skipReason = '用户停止';
+          this.state = STATES.LOCK_SCREEN;
+          return;
+        }
         if (inferReply.type !== 'checkin_yes') {
           this.context.checkinSkipped = true;
           this.context.skipReason =
@@ -813,12 +842,7 @@ class CheckinStateMachine {
         this.context.inferredKindConfirmed = true;
       }
       const blockMismatch = this.config.automation?.blockCheckinOnKindMismatch !== false;
-      if (
-        blockMismatch &&
-        det.taskMismatch &&
-        det.kind !== 'unknown' &&
-        !det.inferred
-      ) {
+      if (blockMismatch && det.taskMismatch && det.kind !== 'unknown') {
         this.context.checkinSkipped = true;
         this.context.skipReason = '打卡类型与任务不一致';
         await this.sendWxSafe(
@@ -869,6 +893,8 @@ class CheckinStateMachine {
       const reasonHint =
         result.reason === 'anti_cheat_dialog'
           ? '钉钉检测到模拟点击，请在手机上手动打卡'
+          : result.reason === 'anti_cheat_unconfirmed'
+            ? '打卡结果无法确认（疑似反作弊弹窗），请查看手机是否已成功'
           : result.reason === 'location_failed'
             ? '定位失败，请在手机上检查定位权限或网络'
           : result.reason === 'location_not_ready'
@@ -881,18 +907,6 @@ class CheckinStateMachine {
     this.context.checkinPerformed = true;
     this.report.data.checkinPerformed = true;
     await this.finishCheckinSuccess();
-  }
-
-  async onScreenshotAfter() {
-    this.state = STATES.DONE;
-  }
-
-  async onStopRecording() {
-    this.state = STATES.DONE;
-  }
-
-  async onSendRecording() {
-    this.state = STATES.LOCK_SCREEN;
   }
 
   async onLockScreen() {

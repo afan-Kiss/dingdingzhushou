@@ -8,15 +8,19 @@ const LOCATION_PENDING_PATTERNS = [/定位中/, /正在定位/, /获取位置/, 
 const LOCATION_FAILED_PATTERNS = [/定位失败/, /无法定位/, /定位超时/];
 
 function detectLocationStatus(nodes = []) {
+  let pendingText = '';
   for (const n of nodes) {
     const t = `${n.text || ''}${n.desc || ''}`.trim();
     if (!t) continue;
     if (LOCATION_FAILED_PATTERNS.some((p) => p.test(t))) {
       return { pending: true, failed: true, text: t.slice(0, 30) };
     }
-    if (LOCATION_PENDING_PATTERNS.some((p) => p.test(t))) {
-      return { pending: true, failed: false, text: t.slice(0, 30) };
+    if (!pendingText && LOCATION_PENDING_PATTERNS.some((p) => p.test(t))) {
+      pendingText = t.slice(0, 30);
     }
+  }
+  if (pendingText) {
+    return { pending: true, failed: false, text: pendingText };
   }
   return { pending: false, failed: false };
 }
@@ -472,7 +476,19 @@ async function clickH5CheckinButton(adb, config, dump, metrics, taskType, hooks 
     };
   }
 
-  await ensureH5CheckinTab(adb, config, dump.nodes);
+  const tabSwitch = await ensureH5CheckinTab(adb, config, dump.nodes);
+  let workingDump = dump;
+  if (tabSwitch.tapped) {
+    const { dumpUi } = require('./uiautomator');
+    const refreshed = await dumpUi(adb, 'checkin_after_tab');
+    if (refreshed.ok) {
+      workingDump = refreshed;
+      const refreshedWebView = findH5AttendanceWebView(refreshed.nodes);
+      if (refreshedWebView?.boundsObj) {
+        Object.assign(webView, refreshedWebView);
+      }
+    }
+  }
 
   const tapPointConfig =
     config.automation?.checkinH5TapPoints ||
@@ -517,7 +533,7 @@ async function clickH5CheckinButton(adb, config, dump, metrics, taskType, hooks 
       }
     : null;
   let hadLargeOverlay = false;
-  const initialButtons = findStandaloneFinalButtons(dump.nodes || [], metrics);
+  const initialButtons = findStandaloneFinalButtons(workingDump.nodes || [], metrics);
 
   for (let i = 0; i < tapPoints.length; i += 1) {
     const fgCheck = await ensureDingTalkForeground(adb, config);
@@ -590,7 +606,7 @@ async function clickH5CheckinButton(adb, config, dump, metrics, taskType, hooks 
           config,
           metrics,
           attendanceBaseline,
-          dump,
+          workingDump,
           { hadLargeOverlay: true, peakBytes: antiCheat.peakBytes || antiCheat.afterBytes }
         );
         if (overlaySuccess.ok) {
@@ -628,7 +644,7 @@ async function clickH5CheckinButton(adb, config, dump, metrics, taskType, hooks 
             config,
             metrics,
             attendanceBaseline,
-            dump,
+            workingDump,
             { hadLargeOverlay: true, peakBytes: antiCheat.peakBytes || antiCheat.afterBytes }
           );
           if (overlaySuccess.ok) {
@@ -722,6 +738,7 @@ module.exports = {
   waitForAttendancePageStable,
   clickH5CheckinButton,
   confirmPhotoRemarkDialogIfPresent,
+  dismissAntiCheatDialogIfPresent,
   detectH5CheckinAlreadySuccess,
   detectLocationStatus,
   CHECKIN_SUCCESS_SIGNALS,

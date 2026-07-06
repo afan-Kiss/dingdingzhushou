@@ -6,6 +6,7 @@ const {
   parseTimeToMinutes,
   getMsUntilTimeToday,
   getMsUntilTomorrowStart,
+  getMsUntilNextDailyRun,
   formatNowTime,
   sleep,
   interruptibleSleep,
@@ -70,6 +71,7 @@ async function runDailySchedule(options = {}) {
         const result = await runCheckinTask('morning', { ...options, skipRandom: false, testNow: false });
         lastState = result.state;
         logger.info('上班流程结束', { state: result.state });
+        if (result.state === 'STOPPED') return { state: 'STOPPED' };
       }
     }
   }
@@ -88,6 +90,7 @@ async function runDailySchedule(options = {}) {
         const result = await runCheckinTask('evening', { ...options, skipRandom: false, testNow: false });
         lastState = result.state;
         logger.info('下班流程结束', { state: result.state });
+        if (result.state === 'STOPPED') return { state: 'STOPPED' };
       }
     }
   }
@@ -99,14 +102,17 @@ async function runDailySchedule(options = {}) {
 /** 常驻模式：每日循环，进程不退出 */
 async function runAutoDaemon(options = {}) {
   logger.info('常驻调度已启动，进程将保持运行直至手动停止');
+  let hadFailure = false;
 
   while (!shouldStop(options)) {
     try {
       const result = await runDailySchedule(options);
+      if (result.state === 'FAILED') hadFailure = true;
       if (result.state === 'STOPPED' || shouldStop(options)) {
         break;
       }
     } catch (err) {
+      hadFailure = true;
       logger.error('今日调度异常', { error: err.message, stack: err.stack });
       if (shouldStop(options)) break;
       const ok = await interruptibleSleep(60_000, () => shouldStop(options));
@@ -116,8 +122,9 @@ async function runAutoDaemon(options = {}) {
 
     if (shouldStop(options)) break;
 
-    const waitMs = getMsUntilTomorrowStart(1);
-    logger.info('常驻等待明日任务', {
+    const config = loadConfig();
+    const waitMs = getMsUntilNextDailyRun(config);
+    logger.info('常驻等待下一轮调度', {
       waitHours: (waitMs / 3_600_000).toFixed(1),
       resumeAt: new Date(Date.now() + waitMs).toLocaleString('zh-CN', { hour12: false }),
     });
@@ -125,8 +132,8 @@ async function runAutoDaemon(options = {}) {
     if (!ok) break;
   }
 
-  logger.info('常驻调度已停止', { now: formatNowTime() });
-  return { state: 'STOPPED' };
+  logger.info('常驻调度已停止', { now: formatNowTime(), hadFailure });
+  return { state: hadFailure ? 'FAILED' : 'STOPPED' };
 }
 
 /** @deprecated 使用 runDailySchedule；保留别名兼容旧引用 */
