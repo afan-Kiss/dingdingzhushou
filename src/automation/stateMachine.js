@@ -4,7 +4,7 @@ const { sleep, computeRandomWaitMs, interruptibleSleep } = require('../randomTim
 const { getTaskLabel, resolveNotifyWxid } = require('../config');
 const { WxbotAdapter } = require('../wechat/wxbotAdapter');
 const { ReplyWaiter } = require('../wechat/replyWaiter');
-const { generateConfirmationId, buildConfirmMessage, buildCheckinPromptMessage, buildInferredKindConfirmMessage } = require('../wechat/confirmation');
+const { generateConfirmationId, buildConfirmMessage, buildCheckinPromptMessage } = require('../wechat/confirmation');
 const { AdbDevice } = require('../adb/device');
 const { takeScreenshot } = require('../adb/screenshot');
 const { ScreenRecorder } = require('../adb/screenRecord');
@@ -112,6 +112,18 @@ class CheckinStateMachine {
     if (ms <= 0) return !this.isStopping();
     const ok = await interruptibleSleep(ms, () => this.isStopping());
     return ok;
+  }
+
+  shouldSkipInitialConfirm() {
+    return this.config.automation?.skipInitialWechatConfirm !== false;
+  }
+
+  ensureConfirmSession() {
+    if (this.context.confirmSession) return this.context.confirmSession;
+    const session = this.createConfirmSession();
+    this.report.setConfirmationSent(session);
+    this.report.setConfirmationReply({ type: 'confirm', content: 'auto_open', receivedAt: Date.now() });
+    return session;
   }
 
   async sendWx(text) {
@@ -430,7 +442,12 @@ class CheckinStateMachine {
 
     if (this.testNow || this.skipRandom) {
       this.context.scheduledTimeStr = this.testNow ? '立即（测试）' : '立即';
-      this.state = STATES.SEND_CONFIRM;
+      if (this.shouldSkipInitialConfirm()) {
+        this.ensureConfirmSession();
+        this.state = STATES.DEVICE_CHECK;
+      } else {
+        this.state = STATES.SEND_CONFIRM;
+      }
     } else {
       this.state = STATES.RANDOM_WAIT;
     }
@@ -459,7 +476,12 @@ class CheckinStateMachine {
       }
     }
 
-    this.state = STATES.SEND_CONFIRM;
+    if (this.shouldSkipInitialConfirm()) {
+      this.ensureConfirmSession();
+      this.state = STATES.DEVICE_CHECK;
+    } else {
+      this.state = STATES.SEND_CONFIRM;
+    }
   }
 
   async onSendConfirm() {
@@ -740,17 +762,7 @@ class CheckinStateMachine {
       await this.sendWx('[dry-run] 已模拟到达考勤页');
     } else {
       const waitSec = Number(this.config.automation?.checkinReplyWaitSeconds ?? 180);
-      const det = await this.resolveAttendanceCheckinDetection();
-      const msg = buildCheckinPromptMessage({
-        taskType: this.taskType,
-        checkinKind: det.kind,
-        checkinLabel: det.label,
-        buttonText: det.buttonText,
-        taskMismatch: det.taskMismatch,
-        inferred: det.inferred === true,
-        confirmationId: session.confirmationId,
-        waitSeconds: waitSec,
-      });
+      const msg = buildCheckinPromptMessage({ taskType: this.taskType, waitSeconds: waitSec });
       try {
         await this.sendWx(msg);
       } catch (err) {
@@ -796,58 +808,11 @@ class CheckinStateMachine {
         return;
       }
       const det = await this.resolveAttendanceCheckinDetection();
-      const requireInferred = this.config.automation?.requireConfirmWhenInferred !== false;
-      if (requireInferred && det.inferred === true) {
-        const inferWaitSec = Number(this.config.automation?.checkinInferredConfirmWaitSeconds ?? 120);
-        const inferMsg = buildInferredKindConfirmMessage({
-          taskType: this.taskType,
-          checkinKind: det.kind,
-          checkinLabel: det.label,
-          taskMismatch: det.taskMismatch,
-          confirmationId: session.confirmationId,
-          waitSeconds: inferWaitSec,
-        });
-        try {
-          await this.sendWx(inferMsg);
-        } catch (err) {
-          await this.fail(
-            'WAIT_CHECKIN_REPLY',
-            `二次确认消息发送失败: ${err.message}`,
-            '请检查 wxbot 是否正常'
-          );
-          return;
-        }
-        const inferSentAt = Date.now();
-        const inferReply = await this.replyWaiter.waitForSessionReply(
-          { ...session, sentAt: inferSentAt, deadlineMs: inferSentAt + inferWaitSec * 1000 },
-          ['checkin_yes', 'checkin_no'],
-          { shouldStop: () => this.isStopping() }
-        );
-        this.report.data.inferredKindConfirmReply = inferReply.type;
-        if (inferReply.type === 'stopped') {
-          this.context.checkinSkipped = true;
-          this.context.skipReason = '用户停止';
-          this.state = STATES.LOCK_SCREEN;
-          return;
-        }
-        if (inferReply.type !== 'checkin_yes') {
-          this.context.checkinSkipped = true;
-          this.context.skipReason =
-            inferReply.type === 'checkin_no' ? '二次确认时选择不打卡' : '二次确认超时未回复';
-          await this.sendWxSafe(`【完成】未打卡（${this.context.skipReason}）。`);
-          this.context.skipNotified = true;
-          this.state = STATES.LOCK_SCREEN;
-          return;
-        }
-        this.context.inferredKindConfirmed = true;
-      }
       const blockMismatch = this.config.automation?.blockCheckinOnKindMismatch !== false;
       if (blockMismatch && det.taskMismatch && det.kind !== 'unknown') {
         this.context.checkinSkipped = true;
         this.context.skipReason = '打卡类型与任务不一致';
-        await this.sendWxSafe(
-          `【已取消】页面为${det.label}打卡，与本次${this.taskLabel}任务不一致，未点击。`
-        );
+        await this.sendWxSafe('类型不符，未打卡。');
         this.context.skipNotified = true;
         this.state = STATES.LOCK_SCREEN;
         return;
@@ -858,13 +823,12 @@ class CheckinStateMachine {
 
     this.context.checkinSkipped = true;
     if (reply.type === 'checkin_no') {
-      this.context.skipReason = '你回复了不打卡';
+      this.context.skipReason = '你回复了否';
     } else if (reply.type === 'timeout') {
       this.context.skipReason = `${Math.round(waitSec / 60)}分钟内未回复`;
     } else {
       this.context.skipReason = '未确认打卡';
     }
-    await this.sendWxSafe(`【完成】未打卡（${this.context.skipReason}）。`);
     this.context.skipNotified = true;
     this.state = STATES.LOCK_SCREEN;
   }
@@ -910,10 +874,6 @@ class CheckinStateMachine {
   }
 
   async onLockScreen() {
-    if (this.context.checkinSkipped && this.context.skipReason && !this.context.skipNotified) {
-      await this.sendWxSafe(`【完成】未打卡（${this.context.skipReason}）。`);
-      this.context.skipNotified = true;
-    }
     await this.tryLockScreenSafe();
     if (this.adb.stopScrcpyTouch) {
       await this.adb.stopScrcpyTouch().catch(() => {});

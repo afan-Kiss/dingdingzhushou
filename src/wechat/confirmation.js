@@ -13,7 +13,7 @@ function extractConfirmationCodes(text) {
   return matches.map((m) => m.slice(1).toUpperCase());
 }
 
-const CANCEL_PATTERNS = [/不打卡/, /取消/, /算了/, /不用/, /^否$/];
+const CANCEL_PATTERNS = [/不打卡/, /取消/, /算了/, /不用/, /^否$/, /^不$/];
 const DONE_PATTERNS = [/已打卡/, /打完了/, /完成了/, /^好了$/];
 const CONFIRM_PATTERNS = [/确定/, /确认/, /去打卡/];
 const CHECKIN_YES_PATTERNS = [
@@ -78,37 +78,10 @@ function buildConfirmMessage({ taskType, confirmationId, scheduledTimeStr, deadl
   );
 }
 
-function buildCheckinPromptMessage({
-  taskType,
-  checkinKind,
-  checkinLabel,
-  buttonText,
-  taskMismatch,
-  inferred,
-  confirmationId,
-  waitSeconds = 180,
-}) {
-  const detectedLabel =
-    checkinLabel || (checkinKind === 'evening' ? '下班' : checkinKind === 'morning' ? '上班' : '');
-  const scheduledLabel = taskType === 'evening' ? '下班' : '上班';
+function buildCheckinPromptMessage({ taskType, waitSeconds = 180 }) {
+  const label = taskType === 'evening' ? '下班' : '上班';
   const waitMin = Math.max(1, Math.round(Number(waitSeconds) / 60));
-  const title = detectedLabel ? `【是否${detectedLabel}打卡？ #${confirmationId}】` : `【是否打卡？ #${confirmationId}】`;
-  const lines = [
-    title,
-    buttonText
-      ? `识别到按钮：${buttonText}`
-      : detectedLabel
-        ? '已到考勤页，请查看上方截图。'
-        : '已到考勤页，请根据截图确认是上班还是下班后再回复。',
-    `回复「是」自动打卡；回复「不打卡」跳过。`,
-    `${waitMin} 分钟内不回复默认不打卡。`,
-  ];
-  if (taskMismatch && detectedLabel) {
-    lines.splice(1, 0, `（页面为${detectedLabel}打卡，本次任务配置为${scheduledLabel}）`);
-  } else if (checkinKind && inferred) {
-    lines.splice(1, 0, `（未能读取按钮文字，按当前时段推断为${detectedLabel}打卡）`);
-  }
-  return lines.join('\n');
+  return `【${label}】已到打卡页，回复「是」打卡、「否」跳过（${waitMin}分钟无回复默认否）。`;
 }
 
 function buildInferredKindConfirmMessage({

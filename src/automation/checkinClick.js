@@ -125,12 +125,8 @@ async function waitForAttendancePageStable(adb, config) {
   const needStableRounds = Number(config.automation?.checkinLocationStableRounds ?? 2);
   const started = Date.now();
 
-  const initialCap = await captureScreenBuffer(adb);
-  const initialHash = initialCap.ok ? hashScreenBuffer(initialCap.buffer) : null;
-  let lastHash = null;
-  let stableRounds = 0;
   let uiClearRounds = 0;
-  let sawLocationUi = false;
+  let sawPendingUi = false;
   let locationReady = false;
 
   logger.info('等待考勤页定位完成（离开「定位中」）', { minMs, maxMs, intervalMs });
@@ -152,56 +148,57 @@ async function waitForAttendancePageStable(adb, config) {
         };
       }
       if (loc.pending) {
-        sawLocationUi = true;
+        sawPendingUi = true;
         uiClearRounds = 0;
         locationReady = false;
         logger.debug('UI 仍显示定位中', { text: loc.text });
       } else {
         uiClearRounds += 1;
-        if (sawLocationUi && uiClearRounds >= needStableRounds) {
-          locationReady = true;
-        }
       }
     }
 
-    const cap = await captureScreenBuffer(adb);
-    if (!cap.ok) {
-      await sleep(intervalMs);
-      continue;
-    }
-    const hash = hashScreenBuffer(cap.buffer);
-
-    if (hash && hash === lastHash) stableRounds += 1;
-    else {
-      stableRounds = 0;
-      lastHash = hash;
-    }
-
-    if (!sawLocationUi && initialHash && hash && hash !== initialHash && stableRounds >= needStableRounds) {
-      locationReady = true;
-    }
-
     const elapsed = Date.now() - started;
-    if (elapsed >= minMs && locationReady && stableRounds >= 1) {
-      logger.info('定位已完成且画面稳定', {
+    if (elapsed >= minMs) {
+      if (!sawPendingUi) {
+        // H5 考勤页文字不在 accessibility 树里，读不到「定位中」≠ 未定位完
+        locationReady = true;
+      } else if (uiClearRounds >= needStableRounds) {
+        locationReady = true;
+      }
+    }
+
+    if (locationReady) {
+      logger.info('定位等待完成，准备点击', {
         elapsedMs: elapsed,
-        stableRounds,
+        sawPendingUi,
         uiClearRounds,
-        sawLocationUi,
+        mode: sawPendingUi ? 'ui_cleared' : 'h5_no_pending_text',
       });
-      return { ok: true, locationReady: true, elapsedMs: elapsed, stableHash: hash, sawLocationUi };
+      return {
+        ok: true,
+        locationReady: true,
+        elapsedMs: elapsed,
+        sawLocationUi: sawPendingUi,
+      };
     }
     await sleep(intervalMs);
   }
 
   const elapsedMs = Date.now() - started;
-  if (!locationReady) {
-    logger.warn('定位等待超时，按钮可能仍为「定位中」', { elapsedMs, sawLocationUi, uiClearRounds });
-    return { ok: false, locationReady: false, timedOut: true, elapsedMs, reason: 'location_timeout' };
+  if (!sawPendingUi) {
+    logger.warn('H5 定位等待超时但未见过「定位中」UI，仍尝试点击', { elapsedMs });
+    return {
+      ok: true,
+      locationReady: true,
+      timedOut: true,
+      elapsedMs,
+      sawLocationUi: false,
+      optimistic: true,
+    };
   }
 
-  logger.warn('定位已完成但画面未完全稳定，继续尝试点击', { elapsedMs });
-  return { ok: true, locationReady: true, timedOut: true, elapsedMs, sawLocationUi };
+  logger.warn('定位等待超时，按钮可能仍为「定位中」', { elapsedMs, sawPendingUi, uiClearRounds });
+  return { ok: false, locationReady: false, timedOut: true, elapsedMs, reason: 'location_timeout' };
 }
 
 async function verifyH5CheckinByScreenshot(adb, beforeCap, verifyWaitMs) {
